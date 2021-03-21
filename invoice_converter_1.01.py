@@ -9,8 +9,7 @@ import time
 class errorClass:
     invoiceName = ""
     invoiceError = ""
-    invoiceSuggestion = ""
-    
+    invoiceSuggestion = "" 
 
 
 def isInt(s):
