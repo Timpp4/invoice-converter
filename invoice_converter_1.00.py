@@ -1,13 +1,17 @@
+# TODO tuotekoodi ja packsize erottelu, jos ei ole eroteltu välilyönnillä
 import pdfplumber
 import pandas as pd
 import openpyxl
 import sys
 import glob
-
+import time
 
 class errorClass:
     invoiceName = ""
     invoiceError = ""
+    invoiceSuggestion = ""
+    
+
 
 def isInt(s):
     try:
@@ -30,7 +34,8 @@ def readPDF(fileName, dataFrames):
     groupCode = ""
     packSize = ""
     quantityPurchased = ""
-    grossUnitCost = ""
+    quantityPurchasedUnit = ""
+    netUnitPriceAmount = ""
     netUnitCost = ""
     totalNetCost = ""
     invoiceNumberBoolean = False
@@ -39,6 +44,8 @@ def readPDF(fileName, dataFrames):
     productFoundBoolean = False
     riviKoodiBoolean = False
     dataCouldNotBeRead = False
+
+    # Virhetilanteiden seurantaa ja kokeilut
 
     with pdfplumber.open(fileName) as pdf:
 
@@ -117,27 +124,48 @@ def readPDF(fileName, dataFrames):
                         productFoundBoolean = False
                         riviKoodiBoolean = False
                         continue # Jatkaa seuraavalle riville alempaan if-lauseeseen
+                    
+
 
                     # quantity, gross unit cost, net unit cost, total net cost
                     if (tuoteRiviBoolean == True):
                         tuoteRiviBoolean = False
+                        try:
+                            print(tmp_list)
+                            quantityPurchased = tmp_list[0]
+                            quantityPurchasedUnit = tmp_list[1]
+                            netUnitCost = tmp_list[2]
+                            netUnitPriceAmount = tmp_list[4]
+                            totalNetCost = round(int(tmp_list[0]) / int(tmp_list[4]) * float(tmp_list[2].replace(",", ".")), 2)
+                        except Exception as e:
+                            print(str(e))
+                            print("continuing....")
+                            print("alustetaan...")
+                            virhe = errorClass()
+                            virhe.invoiceName = str(fileName)
+                            virhe.invoiceError = str(e)
+                            virhe.invoiceSuggestion = str("Tarkista tämä tuote ja lisää tarvittaessa:\n\t" + product + "\n\t" + productCode)
+                            errorList.append(virhe)
 
-                        quantityPurchased = tmp_list[0] + " " + tmp_list[1]
-                        grossUnitCost = tmp_list[2]
-                        netUnitCost = grossUnitCost
-                        totalNetCost = round(int(tmp_list[0]) / int(tmp_list[4]) * float(tmp_list[2].replace(",", ".")), 2)
+
+
+                            
+                            productCode = ""
+                            product = ""
+                            continue
 
                         print("Quantity Purchased: " + quantityPurchased)
-                        print("Gross Unit Cost: " + grossUnitCost)
+                        print("Quantity Purchased Unit: " + quantityPurchasedUnit)
+                        print("Net Unit Price Amount: " + netUnitPriceAmount)          
                         print("Net Unit Cost: " + netUnitCost)
                         print("Total Net Cost: " + str(totalNetCost).replace(".", ",") + "\n")
 
                         # Uusi dataframe malli
                         df = pd.DataFrame(
-                            [[str(clientsLocationName), str(invoiceDate), str(orderID), str(orderDate), str(productCode), str(product), str(groupCode),
-                            str(packSize), str(quantityPurchased), str(grossUnitCost), str(netUnitCost), str(totalNetCost)]],
-                            columns=['Clients Location Name', 'Invoice Date', 'Order#', 'Order date', 'Product Code', 'Description',
-                            'Group', 'Pack Size', 'Quantity Purchased', 'Gross Unit Cost', 'Net Unit Cost', 'Total @ Net Cost']
+                            [[str(fileName), str(clientsLocationName), str(invoiceDate), str(orderID), str(orderDate), str(productCode), str(product), str(groupCode),
+                            str(packSize), str(quantityPurchased), str(quantityPurchasedUnit), str(netUnitPriceAmount), str(netUnitCost), str(totalNetCost)]],
+                            columns=['InvoiceName', 'ClientsLocationName', 'InvoiceDate', 'OrderNumber', 'OrderDate', 'ProductCode', 'Description',
+                            'GroupCode', 'PackSize', 'QuantityPurchased', 'QuantityPurchasedUnit', 'NetUnitPriceAmount', 'NetUnitCost', 'Total@NetCost']
                         )
                         # Lisää malli listaan
                         dataFrames.append(df)
@@ -146,7 +174,7 @@ def readPDF(fileName, dataFrames):
                         # Alustus seuraavaa tuotetta varten
                         productCode = ""
                         product = ""
-
+                        
     # Lasku käyty läpi, palauta tiedot main()
     if not dataSets: # Jos laskulta ei saatu dataa, annetaan virheilmoitus
         dataCouldNotBeRead = True
@@ -158,8 +186,6 @@ def main():
     # Laskujen data tähän listaan
     toExcelList = []
     # Virheiden kaappaus ja tunnistus
-    errorList = []
-    errors = 0
     errorCheck = False
     # Nykyinen työkansio, sis. kaikki .pdf -tiedostot
     path = '*.pdf'
@@ -171,39 +197,53 @@ def main():
                 virhe = errorClass()
                 virhe.invoiceName = str(name)
                 virhe.invoiceError = "Dataa ei voitu lukea"
+                virhe.invoiceSuggestion = "Käy laskut läpi käsin"
                 errorList.append(virhe)
-                errors += 1
+
         except Exception as e: # Jokin muu virhe laskua luettaessa (esim. väärän firman lasku)
             virhe = errorClass()
             virhe.invoiceName = str(name)
             virhe.invoiceError = str(e)
+            virhe.invoiceSuggestion = "Laskua voitiin lukea, mutta sitä ei voitu jäsentää"
             errorList.append(virhe)
-            errors += 1
+
 
     # Yhdistetään listassa oleva data
     try:
         result = pd.concat(toExcelList)
     except Exception as e:
         print("Odottamaton virhe dataa yhdistäessä: " + str(e))
+        print("Virheitä luettaessa laskuja: " + str(len(errorList)))
+        for x in errorList:
+            print("\t" + x.invoiceName)
+            print("\t" + x.invoiceError)
+            print("\t" + x.invoiceSuggestion + "\n")
         return
+        
 
     # Kirjoitetaan data excelliin
     try:
         result.to_excel("out.xlsx", index=False)
         print("out.xlsx kirjoitettiin onnistuneesti")
-        print("Virheitä luettaessa laskuja: " + str(errors))
+        print("Virheitä luettaessa laskuja: " + str(len(errorList)))
         for x in errorList:
             print("\t" + x.invoiceName)
-            print("\t" + x.invoiceError + "\n")
-    # 
+            print("\t" + x.invoiceError)
+            print("\t" + x.invoiceSuggestion + "\n")
+    
     except Exception as e:
         print("Odottamaton virhe kirjoittaessa exceliin: " + str(e))
-        print("Virheitä luettaessa laskuja: " + str(errors))
+        print("Virheitä luettaessa laskuja: " + str(len(errorList)))
         for x in errorList:
             print("\t" + x.invoiceName)
-            print("\t" + x.invoiceError + "\n")
+            print("\t" + x.invoiceError)
+            print("\t" + x.invoiceSuggestion + "\n")
 
 
+start_time = time.time()
+errorList = []
 
 main()
-print("***** EOF *****")
+print("\n************* EOF *************")
+print("**** Run time %s seconds ****" % round((time.time() - start_time), 2))
+print("*******************************\n")
